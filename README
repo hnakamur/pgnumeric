@@ -1,0 +1,6 @@
+pgnumeric library for decimal float calculations.
+
+This libary is a standalone version of numeric.c in PostgreSQL.
+This libary is released under the PostgreSQL License, a liberal Open Source
+license, similar to the BSD or MIT licenses.
+
