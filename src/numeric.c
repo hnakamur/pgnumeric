@@ -61,110 +61,12 @@ extern int pg_strncasecmp(const char *s1, const char *s2, size_t n);
 
 
 /* ----------
- * Uncomment the following to enable compilation of dump_numeric()
- * and dump_var() and to get a dump of any result produced by make_result().
+ * Uncomment the following to enable compilation of dump_var()
+ * and to get a dump of any result produced by make_result().
  * ----------
 #define NUMERIC_DEBUG
  */
 
-
-/* ----------
- * Local data types
- *
- * Numeric values are represented in a base-NBASE floating point format.
- * Each "digit" ranges from 0 to NBASE-1.  The type NumericDigit is signed
- * and wide enough to store a digit.  We assume that NBASE*NBASE can fit in
- * an int.  Although the purely calculational routines could handle any even
- * NBASE that's less than sqrt(INT_MAX), in practice we are only interested
- * in NBASE a power of ten, so that I/O conversions and decimal rounding
- * are easy.  Also, it's actually more efficient if NBASE is rather less than
- * sqrt(INT_MAX), so that there is "headroom" for mul_var and div_var_fast to
- * postpone processing carries.
- * ----------
- */
-
-#if 0
-#define NBASE       10
-#define HALF_NBASE  5
-#define DEC_DIGITS  1           /* decimal digits per NBASE digit */
-#define MUL_GUARD_DIGITS    4   /* these are measured in NBASE digits */
-#define DIV_GUARD_DIGITS    8
-
-typedef signed char NumericDigit;
-#endif
-
-#if 0
-#define NBASE       100
-#define HALF_NBASE  50
-#define DEC_DIGITS  2           /* decimal digits per NBASE digit */
-#define MUL_GUARD_DIGITS    3   /* these are measured in NBASE digits */
-#define DIV_GUARD_DIGITS    6
-
-typedef signed char NumericDigit;
-#endif
-
-#if 1
-#define NBASE       10000
-#define HALF_NBASE  5000
-#define DEC_DIGITS  4           /* decimal digits per NBASE digit */
-#define MUL_GUARD_DIGITS    2   /* these are measured in NBASE digits */
-#define DIV_GUARD_DIGITS    4
-
-typedef int16_t NumericDigit;
-#endif
-
-/* ----------
- * NumericVar is the format we use for arithmetic.  The digit-array part
- * is the same as the NumericData storage format, but the header is more
- * complex.
- *
- * The value represented by a NumericVar is determined by the sign, weight,
- * ndigits, and digits[] array.
- * Note: the first digit of a NumericVar's value is assumed to be multiplied
- * by NBASE ** weight.  Another way to say it is that there are weight+1
- * digits before the decimal point.  It is possible to have weight < 0.
- *
- * buf points at the physical start of the malloc'd digit buffer for the
- * NumericVar.  digits points at the first digit in actual use (the one
- * with the specified weight).  We normally leave an unused digit or two
- * (preset to zeroes) between buf and digits, so that there is room to store
- * a carry out of the top digit without reallocating space.  We just need to
- * decrement digits (and increment weight) to make room for the carry digit.
- * (There is no such extra space in a numeric value stored in the database,
- * only in a NumericVar in memory.)
- *
- * If buf is NULL then the digit buffer isn't actually malloc'd and should
- * not be freed --- see the constants below for an example.
- *
- * dscale, or display scale, is the nominal precision expressed as number
- * of digits after the decimal point (it must always be >= 0 at present).
- * dscale may be more than the number of physically stored fractional digits,
- * implying that we have suppressed storage of significant trailing zeroes.
- * It should never be less than the number of stored digits, since that would
- * imply hiding digits that are present.  NOTE that dscale is always expressed
- * in *decimal* digits, and so it may correspond to a fractional number of
- * base-NBASE digits --- divide by DEC_DIGITS to convert to NBASE digits.
- *
- * rscale, or result scale, is the target precision for a computation.
- * Like dscale it is expressed as number of *decimal* digits after the decimal
- * point, and is always >= 0 at present.
- * Note that rscale is not stored in variables --- it's figured on-the-fly
- * from the dscales of the inputs.
- *
- * NB: All the variable-level functions are written in a style that makes it
- * possible to give one and the same variable as argument and destination.
- * This is feasible because the digit buffer is separate from the variable.
- * ----------
- */
-typedef struct NumericVar
-{
-    int         ndigits;        /* # of digits in digits[] - can be 0! */
-    int         weight;         /* weight of first digit */
-    int         sign;           /* NUMERIC_POS, NUMERIC_NEG, or NUMERIC_NAN */
-    int         dscale;         /* display scale */
-    NumericDigit *buf;          /* start of malloc'd space for digits[] */
-    NumericDigit *digits;       /* base-NBASE digits */
-} NumericVar;
 
 
 /* ----------
@@ -172,24 +74,24 @@ typedef struct NumericVar
  * ----------
  */
 static NumericDigit const_zero_data[1] = {0};
-static NumericVar const_zero =
+static numeric const_zero =
 {0, 0, NUMERIC_POS, 0, NULL, const_zero_data};
 
 static NumericDigit const_one_data[1] = {1};
-static NumericVar const_one =
+static numeric const_one =
 {1, 0, NUMERIC_POS, 0, NULL, const_one_data};
 
 static NumericDigit const_two_data[1] = {2};
-static NumericVar const_two =
+static numeric const_two =
 {1, 0, NUMERIC_POS, 0, NULL, const_two_data};
 
 #if DEC_DIGITS == 4 || DEC_DIGITS == 2
 static NumericDigit const_ten_data[1] = {10};
-static NumericVar const_ten =
+static numeric const_ten =
 {1, 0, NUMERIC_POS, 0, NULL, const_ten_data};
 #elif DEC_DIGITS == 1
 static NumericDigit const_ten_data[1] = {1};
-static NumericVar const_ten =
+static numeric const_ten =
 {1, 1, NUMERIC_POS, 0, NULL, const_ten_data};
 #endif
 
@@ -200,7 +102,7 @@ static NumericDigit const_zero_point_five_data[1] = {50};
 #elif DEC_DIGITS == 1
 static NumericDigit const_zero_point_five_data[1] = {5};
 #endif
-static NumericVar const_zero_point_five =
+static numeric const_zero_point_five =
 {1, -1, NUMERIC_POS, 1, NULL, const_zero_point_five_data};
 
 #if DEC_DIGITS == 4
@@ -210,20 +112,20 @@ static NumericDigit const_zero_point_nine_data[1] = {90};
 #elif DEC_DIGITS == 1
 static NumericDigit const_zero_point_nine_data[1] = {9};
 #endif
-static NumericVar const_zero_point_nine =
+static numeric const_zero_point_nine =
 {1, -1, NUMERIC_POS, 1, NULL, const_zero_point_nine_data};
 
 #if DEC_DIGITS == 4
 static NumericDigit const_zero_point_01_data[1] = {100};
-static NumericVar const_zero_point_01 =
+static numeric const_zero_point_01 =
 {1, -1, NUMERIC_POS, 2, NULL, const_zero_point_01_data};
 #elif DEC_DIGITS == 2
 static NumericDigit const_zero_point_01_data[1] = {1};
-static NumericVar const_zero_point_01 =
+static numeric const_zero_point_01 =
 {1, -1, NUMERIC_POS, 2, NULL, const_zero_point_01_data};
 #elif DEC_DIGITS == 1
 static NumericDigit const_zero_point_01_data[1] = {1};
-static NumericVar const_zero_point_01 =
+static numeric const_zero_point_01 =
 {1, -2, NUMERIC_POS, 2, NULL, const_zero_point_01_data};
 #endif
 
@@ -234,10 +136,10 @@ static NumericDigit const_one_point_one_data[2] = {1, 10};
 #elif DEC_DIGITS == 1
 static NumericDigit const_one_point_one_data[2] = {1, 1};
 #endif
-static NumericVar const_one_point_one =
+static numeric const_one_point_one =
 {2, 0, NUMERIC_POS, 1, NULL, const_one_point_one_data};
 
-static NumericVar const_nan =
+static numeric const_nan =
 {0, 0, NUMERIC_NAN, 0, NULL, NULL};
 
 #if DEC_DIGITS == 4
@@ -251,10 +153,8 @@ static const int round_powers[4] = {0, 1000, 100, 10};
  */
 
 #ifdef NUMERIC_DEBUG
-static void dump_numeric(const char *str, Numeric num);
-static void dump_var(const char *str, NumericVar *var);
+static void dump_var(const char *str, numeric *var);
 #else
-#define dump_numeric(s,n)
 #define dump_var(s,v)
 #endif
 
@@ -266,79 +166,75 @@ static void dump_var(const char *str, NumericVar *var);
              free(buf); \
     } while (0)
 
-#define init_var(v)     memset(v, 0, sizeof(NumericVar))
 
-#define NUMERIC_DIGITS(num) ((NumericDigit *)(num)->n_data)
-#define NUMERIC_NDIGITS(num) \
-    (((num)->n_length - NUMERIC_HDRSZ) / sizeof(NumericDigit))
+#define NUMERIC_DIGITS(num) ((NumericDigit *)(num)->digits)
+#define NUMERIC_NDIGITS(num) ((num)->ndigits)
 
-static void alloc_var(NumericVar *var, int ndigits);
-static void free_var(NumericVar *var);
-static void zero_var(NumericVar *var);
+static void alloc_var(numeric *var, int ndigits);
 
-static numeric_errcode_t numeric_out(const Numeric num, char **result);
+static numeric_errcode_t numeric_out(const numeric *num, char **result);
 static numeric_errcode_t set_var_from_str(const char *str, const char *cp,
-                NumericVar *dest, const char **result);
-static void set_var_from_num(Numeric value, NumericVar *dest);
-static void set_var_from_var(NumericVar *value, NumericVar *dest);
-static char *get_str_from_var(NumericVar *var, int dscale);
-static char *get_str_from_var_sci(NumericVar *var, int rscale);
+                numeric *dest, const char **result);
+static void copy_var(const numeric *value, numeric *dest);
+static void set_var_from_var(const numeric *value, numeric *dest);
+static char *get_str_from_var(numeric *var, int dscale);
+static char *get_str_from_var_sci(numeric *var, int rscale);
 
-static numeric_errcode_t make_result(NumericVar *var, Numeric *result);
+static numeric_errcode_t make_result(const numeric *var, numeric *result);
 
-static numeric_errcode_t check_bounds_and_round(NumericVar *var, int precision,
+static numeric_errcode_t check_bounds_and_round(numeric *var, int precision,
                 int scale);
 
-static numeric_errcode_t numericvar_to_int32(NumericVar *var, int32_t *result);
-static bool numericvar_to_int64(NumericVar *var, int64_t *result);
-static void int64_to_numericvar(int64_t val, NumericVar *var);
-static numeric_errcode_t numericvar_to_double_no_overflow(NumericVar *var,
+static numeric_errcode_t numericvar_to_int32(numeric *var, int32_t *result);
+static bool numericvar_to_int64(numeric *var, int64_t *result);
+static void int64_to_numericvar(int64_t val, numeric *var);
+static numeric_errcode_t numericvar_to_double_no_overflow(const numeric *var,
                 double *result);
 
-static int cmp_numerics(const Numeric num1, const Numeric num2);
-static int cmp_var(const NumericVar *var1, const NumericVar *var2);
+static int cmp_numerics(const numeric *num1, const numeric *num2);
+static int cmp_var(const numeric *var1, const numeric *var2);
 static int cmp_var_common(const NumericDigit *var1digits, int var1ndigits,
                 int var1weight, int var1sign,
                 const NumericDigit *var2digits, int var2ndigits,
                 int var2weight, int var2sign);
-static void add_var(NumericVar *var1, NumericVar *var2, NumericVar *result);
-static void sub_var(NumericVar *var1, NumericVar *var2, NumericVar *result);
-static void mul_var(NumericVar *var1, NumericVar *var2, NumericVar *result,
+static void add_var(const numeric *var1, const numeric *var2, numeric *result);
+static void sub_var(const numeric *var1, const numeric *var2, numeric *result);
+static void mul_var(const numeric *var1, const numeric *var2, numeric *result,
                 int rscale);
-static numeric_errcode_t div_var(NumericVar *var1, NumericVar *var2,
-                NumericVar *result, int rscale, bool round);
-static numeric_errcode_t div_var_fast(NumericVar *var1, NumericVar *var2,
-                NumericVar *result, int rscale, bool round);
-static int  select_div_scale(NumericVar *var1, NumericVar *var2);
-static numeric_errcode_t mod_var(NumericVar *var1, NumericVar *var2,
-                NumericVar *result);
-static void ceil_var(NumericVar *var, NumericVar *result);
-static void floor_var(NumericVar *var, NumericVar *result);
+static numeric_errcode_t div_var(const numeric *var1, const numeric *var2,
+                numeric *result, int rscale, bool round);
+static numeric_errcode_t div_var_fast(numeric *var1, numeric *var2,
+                numeric *result, int rscale, bool round);
+static int  select_div_scale(const numeric *var1, const numeric *var2);
+static numeric_errcode_t mod_var(const numeric *var1, const numeric *var2,
+                numeric *result);
+static void ceil_var(const numeric *var, numeric *result);
+static void floor_var(const numeric *var, numeric *result);
 
-static numeric_errcode_t sqrt_var(NumericVar *arg, NumericVar *result,
+static numeric_errcode_t sqrt_var(const numeric *arg, numeric *result,
                 int rscale);
-static numeric_errcode_t exp_var(NumericVar *arg, NumericVar *result,
+static numeric_errcode_t exp_var(const numeric *arg, numeric *result,
                 int rscale);
-static void exp_var_internal(NumericVar *arg, NumericVar *result, int rscale);
-static numeric_errcode_t ln_var(NumericVar *arg, NumericVar *result,
+static void exp_var_internal(const numeric *arg, numeric *result, int rscale);
+static numeric_errcode_t ln_var(const numeric *arg, numeric *result,
                 int rscale);
-static numeric_errcode_t log_var(NumericVar *base, NumericVar *num,
-                NumericVar *result);
-static numeric_errcode_t power_var(NumericVar *base, NumericVar *exp,
-                NumericVar *result);
-static void power_var_int(NumericVar *base, int exp, NumericVar *result,
+static numeric_errcode_t log_var(const numeric *base, const numeric *num,
+                numeric *result);
+static numeric_errcode_t power_var(const numeric *base, const numeric *exp,
+                numeric *result);
+static void power_var_int(const numeric *base, int exp, numeric *result,
                 int rscale);
 
-static int cmp_abs(NumericVar *var1, NumericVar *var2);
+static int cmp_abs(const numeric *var1, const numeric *var2);
 static int cmp_abs_common(const NumericDigit *var1digits, int var1ndigits,
                 int var1weight,
                 const NumericDigit *var2digits, int var2ndigits,
                 int var2weight);
-static void add_abs(NumericVar *var1, NumericVar *var2, NumericVar *result);
-static void sub_abs(NumericVar *var1, NumericVar *var2, NumericVar *result);
-static void round_var(NumericVar *var, int rscale);
-static void trunc_var(NumericVar *var, int rscale);
-static void strip_var(NumericVar *var);
+static void add_abs(const numeric *var1, const numeric *var2, numeric *result);
+static void sub_abs(const numeric *var1, const numeric *var2, numeric *result);
+static void round_var(numeric *var, int rscale);
+static void trunc_var(numeric *var, int rscale);
+static void strip_var(numeric *var);
 
 
 /* ----------------------------------------------------------------------
@@ -349,7 +245,7 @@ static void strip_var(NumericVar *var);
  */
 
 numeric_errcode_t
-numeric_from_str(const char *str, int precision, int scale, Numeric *result)
+numeric_from_str(const char *str, int precision, int scale, numeric *result)
 {
     const char *cp;
     numeric_errcode_t errcode;
@@ -386,9 +282,9 @@ numeric_from_str(const char *str, int precision, int scale, Numeric *result)
         /*
          * Use set_var_from_str() to parse a normal numeric value
          */
-        NumericVar  value;
+        numeric  value;
 
-        init_var(&value);
+        numeric_init(&value);
 
         errcode = set_var_from_str(str, cp, &value, &cp);
         if (errcode != NUMERIC_ERRCODE_NO_ERROR)
@@ -413,7 +309,7 @@ numeric_from_str(const char *str, int precision, int scale, Numeric *result)
         errcode = make_result(&value, result);
         if (errcode != NUMERIC_ERRCODE_NO_ERROR)
             return errcode;
-        free_var(&value);
+        numeric_dispose(&value);
     }
 
     return NUMERIC_ERRCODE_NO_ERROR;
@@ -425,9 +321,9 @@ numeric_from_str(const char *str, int precision, int scale, Numeric *result)
  *  Convert numeric value to string
  */
 static numeric_errcode_t
-numeric_out(const Numeric num, char **result)
+numeric_out(const numeric *num, char **result)
 {
-    NumericVar  x;
+    numeric  x;
 
     /*
      * Handle NaN
@@ -442,16 +338,16 @@ numeric_out(const Numeric num, char **result)
      * Get the number in the variable format.
      *
      * Even if we didn't need to change format, we'd still need to copy the
-     * value to have a modifiable copy for rounding.  set_var_from_num() also
+     * value to have a modifiable copy for rounding.  set_var_from_var() also
      * guarantees there is extra digit space in case we produce a carry out
      * from rounding.
      */
-    init_var(&x);
-    set_var_from_num(num, &x);
+    numeric_init(&x);
+    set_var_from_var(num, &x);
 
     *result = get_str_from_var(&x, x.dscale);
 
-    free_var(&x);
+    numeric_dispose(&x);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -462,9 +358,9 @@ numeric_out(const Numeric num, char **result)
  *  Convert numeric value to string
  */
 numeric_errcode_t
-numeric_to_str(const Numeric num, int scale, char **result)
+numeric_to_str(const numeric *num, int scale, char **result)
 {
-    NumericVar  x;
+    numeric  x;
 
     /*
      * Handle NaN
@@ -479,18 +375,18 @@ numeric_to_str(const Numeric num, int scale, char **result)
      * Get the number in the variable format.
      *
      * Even if we didn't need to change format, we'd still need to copy the
-     * value to have a modifiable copy for rounding.  set_var_from_num() also
+     * value to have a modifiable copy for rounding.  set_var_from_var() also
      * guarantees there is extra digit space in case we produce a carry out
      * from rounding.
      */
-    init_var(&x);
-    set_var_from_num(num, &x);
+    numeric_init(&x);
+    set_var_from_var(num, &x);
 
     if (scale < 0)
         scale = x.dscale;
     *result = get_str_from_var(&x, scale);
 
-    free_var(&x);
+    numeric_dispose(&x);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -501,9 +397,9 @@ numeric_to_str(const Numeric num, int scale, char **result)
  *  Convert numeric value to string in scientific notation.
  */
 numeric_errcode_t
-numeric_to_str_sci(const Numeric num, int scale, char **result)
+numeric_to_str_sci(const numeric *num, int scale, char **result)
 {
-    NumericVar  x;
+    numeric  x;
 
     /*
      * Handle NaN
@@ -514,14 +410,14 @@ numeric_to_str_sci(const Numeric num, int scale, char **result)
         return NUMERIC_ERRCODE_NO_ERROR;
     }
 
-    init_var(&x);
-    set_var_from_num(num, &x);
+    numeric_init(&x);
+    set_var_from_var(num, &x);
 
     if (scale < 0)
         scale = x.dscale;
     *result = get_str_from_var_sci(&x, scale);
 
-    free_var(&x);
+    numeric_dispose(&x);
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
@@ -533,53 +429,47 @@ numeric_to_str_sci(const Numeric num, int scale, char **result)
  */
 
 numeric_errcode_t
-numeric_abs(const Numeric num, Numeric *result)
+numeric_abs(const numeric *num, numeric *result)
 {
+    numeric_errcode_t errcode;
+
     /*
      * Handle NaN
      */
     if (NUMERIC_IS_NAN(num))
         return make_result(&const_nan, result);
 
-    /*
-     * Do it the easy way directly on the packed format
-     */
-    *result = (Numeric) malloc(num->n_length);
-    memcpy(*result, num, num->n_length);
-
-    (*result)->n_sign_dscale = NUMERIC_POS | NUMERIC_DSCALE(num);
+    errcode = make_result(num, result);
+    if (errcode != NUMERIC_ERRCODE_NO_ERROR)
+        return errcode;
+    result->sign = NUMERIC_POS;
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
 
 numeric_errcode_t
-numeric_minus(const Numeric num, Numeric *result)
+numeric_minus(const numeric *num, numeric *result)
 {
+    numeric_errcode_t errcode;
+
     /*
      * Handle NaN
      */
     if (NUMERIC_IS_NAN(num))
         return make_result(&const_nan, result);
 
-    /*
-     * Do it the easy way directly on the packed format
-     */
-    *result = (Numeric) malloc(num->n_length);
-    memcpy(*result, num, num->n_length);
+    errcode = make_result(num, result);
+    if (errcode != NUMERIC_ERRCODE_NO_ERROR)
+        return errcode;
 
-    /*
-     * The packed format is known to be totally zero digit trimmed always. So
-     * we can identify a ZERO by the fact that there are no digits at all.  Do
-     * nothing to a zero.
-     */
-    if (num->n_length != NUMERIC_HDRSZ)
+    if (!NUMERIC_IS_ZERO(num))
     {
         /* Else, flip the sign */
         if (NUMERIC_SIGN(num) == NUMERIC_POS)
-            (*result)->n_sign_dscale = NUMERIC_NEG | NUMERIC_DSCALE(num);
+            result->sign = NUMERIC_NEG;
         else
-            (*result)->n_sign_dscale = NUMERIC_POS | NUMERIC_DSCALE(num);
+            result->sign = NUMERIC_POS;
     }
 
     return NUMERIC_ERRCODE_NO_ERROR;
@@ -587,12 +477,9 @@ numeric_minus(const Numeric num, Numeric *result)
 
 
 numeric_errcode_t
-numeric_plus(const Numeric num, Numeric *result)
+numeric_plus(const numeric *num, numeric *result)
 {
-    *result = (Numeric) malloc(num->n_length);
-    memcpy(*result, num, num->n_length);
-
-    return NUMERIC_ERRCODE_NO_ERROR;
+    return make_result(num, result);
 }
 
 /*
@@ -602,9 +489,8 @@ numeric_plus(const Numeric num, Numeric *result)
  * to 0, and 1 if the argument is greater than zero.
  */
 numeric_errcode_t
-numeric_sign(const Numeric num, Numeric *result)
+numeric_sign(const numeric *num, numeric *result)
 {
-    NumericVar  result_var;
     numeric_errcode_t errcode;
 
     /*
@@ -613,28 +499,19 @@ numeric_sign(const Numeric num, Numeric *result)
     if (NUMERIC_IS_NAN(num))
         return make_result(&const_nan, result);
 
-    init_var(&result_var);
-
-    /*
-     * The packed format is known to be totally zero digit trimmed always. So
-     * we can identify a ZERO by the fact that there are no digits at all.
-     */
-    if (num->n_length == NUMERIC_HDRSZ)
-        set_var_from_var(&const_zero, &result_var);
+    if (NUMERIC_IS_ZERO(num))
+        return make_result(&const_zero, result);
     else
     {
         /*
          * And if there are some, we return a copy of ONE with the sign of our
          * argument
          */
-        set_var_from_var(&const_one, &result_var);
-        result_var.sign = NUMERIC_SIGN(num);
+        errcode = make_result(&const_one, result);
+        if (errcode != NUMERIC_ERRCODE_NO_ERROR)
+            return errcode;
+        result->sign = NUMERIC_SIGN(num);
     }
-
-    errcode = make_result(&result_var, result);
-    if (errcode != NUMERIC_ERRCODE_NO_ERROR)
-        return errcode;
-    free_var(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -648,9 +525,9 @@ numeric_sign(const Numeric num, Numeric *result)
  *  point --- Oracle interprets rounding that way.
  */
 numeric_errcode_t
-numeric_round(const Numeric num, int scale, Numeric *result)
+numeric_round(const numeric *num, int scale, numeric *result)
 {
-    NumericVar  arg;
+    numeric  arg;
     numeric_errcode_t errcode;
 
     /*
@@ -668,8 +545,8 @@ numeric_round(const Numeric num, int scale, Numeric *result)
     /*
      * Unpack the argument and round it at the proper digit position
      */
-    init_var(&arg);
-    set_var_from_num(num, &arg);
+    numeric_init(&arg);
+    set_var_from_var(num, &arg);
 
     round_var(&arg, scale);
 
@@ -684,7 +561,7 @@ numeric_round(const Numeric num, int scale, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&arg);
+    numeric_dispose(&arg);
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
@@ -697,9 +574,9 @@ numeric_round(const Numeric num, int scale, Numeric *result)
  *  point --- Oracle interprets truncation that way.
  */
 numeric_errcode_t
-numeric_trunc(const Numeric num, int scale, Numeric *result)
+numeric_trunc(const numeric *num, int scale, numeric *result)
 {
-    NumericVar  arg;
+    numeric  arg;
     numeric_errcode_t errcode;
 
     /*
@@ -717,8 +594,8 @@ numeric_trunc(const Numeric num, int scale, Numeric *result)
     /*
      * Unpack the argument and truncate it at the proper digit position
      */
-    init_var(&arg);
-    set_var_from_num(num, &arg);
+    numeric_init(&arg);
+    set_var_from_var(num, &arg);
 
     trunc_var(&arg, scale);
 
@@ -733,7 +610,7 @@ numeric_trunc(const Numeric num, int scale, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&arg);
+    numeric_dispose(&arg);
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
@@ -744,23 +621,23 @@ numeric_trunc(const Numeric num, int scale, Numeric *result)
  *  Return the smallest integer greater than or equal to the argument
  */
 numeric_errcode_t
-numeric_ceil(const Numeric num, Numeric *result)
+numeric_ceil(const numeric *num, numeric *result)
 {
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     if (NUMERIC_IS_NAN(num))
         return make_result(&const_nan, result);
 
-    init_var(&result_var);
+    numeric_init(&result_var);
 
-    set_var_from_num(num, &result_var);
+    set_var_from_var(num, &result_var);
     ceil_var(&result_var, &result_var);
 
     errcode = make_result(&result_var, result);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -772,23 +649,23 @@ numeric_ceil(const Numeric num, Numeric *result)
  *  Return the largest integer equal to or less than the argument
  */
 numeric_errcode_t
-numeric_floor(const Numeric num, Numeric *result)
+numeric_floor(const numeric *num, numeric *result)
 {
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     if (NUMERIC_IS_NAN(num))
         return make_result(&const_nan, result);
 
-    init_var(&result_var);
+    numeric_init(&result_var);
 
-    set_var_from_num(num, &result_var);
+    set_var_from_var(num, &result_var);
     floor_var(&result_var, &result_var);
 
     errcode = make_result(&result_var, result);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -806,49 +683,49 @@ numeric_floor(const Numeric num, Numeric *result)
 
 
 int
-numeric_cmp(const Numeric num1, const Numeric num2)
+numeric_cmp(const numeric *num1, const numeric *num2)
 {
     return cmp_numerics(num1, num2);
 }
 
 bool
-numeric_eq(const Numeric num1, const Numeric num2)
+numeric_eq(const numeric *num1, const numeric *num2)
 {
     return cmp_numerics(num1, num2) == 0;
 }
 
 bool
-numeric_ne(const Numeric num1, const Numeric num2)
+numeric_ne(const numeric *num1, const numeric *num2)
 {
     return cmp_numerics(num1, num2) != 0;
 }
 
 bool
-numeric_gt(const Numeric num1, const Numeric num2)
+numeric_gt(const numeric *num1, const numeric *num2)
 {
     return cmp_numerics(num1, num2) > 0;
 }
 
 bool
-numeric_ge(const Numeric num1, const Numeric num2)
+numeric_ge(const numeric *num1, const numeric *num2)
 {
     return cmp_numerics(num1, num2) >= 0;
 }
 
 bool
-numeric_lt(const Numeric num1, const Numeric num2)
+numeric_lt(const numeric *num1, const numeric *num2)
 {
     return cmp_numerics(num1, num2) < 0;
 }
 
 bool
-numeric_le(const Numeric num1, const Numeric num2)
+numeric_le(const numeric *num1, const numeric *num2)
 {
     return cmp_numerics(num1, num2) <= 0;
 }
 
 static int
-cmp_numerics(const Numeric num1, const Numeric num2)
+cmp_numerics(const numeric *num1, const numeric *num2)
 {
     int         result;
 
@@ -871,9 +748,9 @@ cmp_numerics(const Numeric num1, const Numeric num2)
     else
     {
         result = cmp_var_common(NUMERIC_DIGITS(num1), NUMERIC_NDIGITS(num1),
-                                num1->n_weight, NUMERIC_SIGN(num1),
+                                num1->weight, NUMERIC_SIGN(num1),
                                 NUMERIC_DIGITS(num2), NUMERIC_NDIGITS(num2),
-                                num2->n_weight, NUMERIC_SIGN(num2));
+                                num2->weight, NUMERIC_SIGN(num2));
     }
 
     return result;
@@ -894,11 +771,9 @@ cmp_numerics(const Numeric num1, const Numeric num2)
  *  Add two numerics
  */
 numeric_errcode_t
-numeric_add(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_add(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  arg1;
-    NumericVar  arg2;
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     /*
@@ -910,22 +785,15 @@ numeric_add(const Numeric num1, const Numeric num2, Numeric *result)
     /*
      * Unpack the values, let add_var() compute the result_var and return it.
      */
-    init_var(&arg1);
-    init_var(&arg2);
-    init_var(&result_var);
+    numeric_init(&result_var);
 
-    set_var_from_num(num1, &arg1);
-    set_var_from_num(num2, &arg2);
-
-    add_var(&arg1, &arg2, &result_var);
+    add_var(num1, num2, &result_var);
 
     errcode = make_result(&result_var, result);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&arg1);
-    free_var(&arg2);
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -937,11 +805,9 @@ numeric_add(const Numeric num1, const Numeric num2, Numeric *result)
  *  Subtract one numeric from another
  */
 numeric_errcode_t
-numeric_sub(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_sub(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  arg1;
-    NumericVar  arg2;
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     /*
@@ -953,22 +819,15 @@ numeric_sub(const Numeric num1, const Numeric num2, Numeric *result)
     /*
      * Unpack the values, let sub_var() compute the result_var and return it.
      */
-    init_var(&arg1);
-    init_var(&arg2);
-    init_var(&result_var);
+    numeric_init(&result_var);
 
-    set_var_from_num(num1, &arg1);
-    set_var_from_num(num2, &arg2);
-
-    sub_var(&arg1, &arg2, &result_var);
+    sub_var(num1, num2, &result_var);
 
     errcode = make_result(&result_var, result);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&arg1);
-    free_var(&arg2);
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -980,11 +839,9 @@ numeric_sub(const Numeric num1, const Numeric num2, Numeric *result)
  *  Calculate the product of two numerics
  */
 numeric_errcode_t
-numeric_mul(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_mul(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  arg1;
-    NumericVar  arg2;
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     /*
@@ -1000,22 +857,15 @@ numeric_mul(const Numeric num1, const Numeric num2, Numeric *result)
      * we request exact representation for the product (rscale = sum(dscale of
      * arg1, dscale of arg2)).
      */
-    init_var(&arg1);
-    init_var(&arg2);
-    init_var(&result_var);
+    numeric_init(&result_var);
 
-    set_var_from_num(num1, &arg1);
-    set_var_from_num(num2, &arg2);
-
-    mul_var(&arg1, &arg2, &result_var, arg1.dscale + arg2.dscale);
+    mul_var(num1, num2, &result_var, num1->dscale + num2->dscale);
 
     errcode = make_result(&result_var, result);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&arg1);
-    free_var(&arg2);
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1027,11 +877,9 @@ numeric_mul(const Numeric num1, const Numeric num2, Numeric *result)
  *  Divide one numeric into another
  */
 numeric_errcode_t
-numeric_div(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_div(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  arg1;
-    NumericVar  arg2;
-    NumericVar  result_var;
+    numeric  result_var;
     int         rscale;
     numeric_errcode_t errcode;
 
@@ -1044,22 +892,17 @@ numeric_div(const Numeric num1, const Numeric num2, Numeric *result)
     /*
      * Unpack the arguments
      */
-    init_var(&arg1);
-    init_var(&arg2);
-    init_var(&result_var);
-
-    set_var_from_num(num1, &arg1);
-    set_var_from_num(num2, &arg2);
+    numeric_init(&result_var);
 
     /*
      * Select scale for division result_var
      */
-    rscale = select_div_scale(&arg1, &arg2);
+    rscale = select_div_scale(num1, num2);
 
     /*
      * Do the divide and return the result_var
      */
-    errcode = div_var(&arg1, &arg2, &result_var, rscale, true);
+    errcode = div_var(num1, num2, &result_var, rscale, true);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1067,9 +910,7 @@ numeric_div(const Numeric num1, const Numeric num2, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&arg1);
-    free_var(&arg2);
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1081,11 +922,9 @@ numeric_div(const Numeric num1, const Numeric num2, Numeric *result)
  *  Divide one numeric into another, truncating the result to an integer
  */
 numeric_errcode_t
-numeric_div_trunc(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_div_trunc(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  arg1;
-    NumericVar  arg2;
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     /*
@@ -1097,17 +936,12 @@ numeric_div_trunc(const Numeric num1, const Numeric num2, Numeric *result)
     /*
      * Unpack the arguments
      */
-    init_var(&arg1);
-    init_var(&arg2);
-    init_var(&result_var);
-
-    set_var_from_num(num1, &arg1);
-    set_var_from_num(num2, &arg2);
+    numeric_init(&result_var);
 
     /*
      * Do the divide and return the result_var
      */
-    errcode = div_var(&arg1, &arg2, &result_var, 0, false);
+    errcode = div_var(num1, num2, &result_var, 0, false);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1115,9 +949,7 @@ numeric_div_trunc(const Numeric num1, const Numeric num2, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&arg1);
-    free_var(&arg2);
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1129,24 +961,17 @@ numeric_div_trunc(const Numeric num1, const Numeric num2, Numeric *result)
  *  Calculate the modulo of two numerics
  */
 numeric_errcode_t
-numeric_mod(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_mod(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  arg1;
-    NumericVar  arg2;
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
         return make_result(&const_nan, result);
 
-    init_var(&arg1);
-    init_var(&arg2);
-    init_var(&result_var);
+    numeric_init(&result_var);
 
-    set_var_from_num(num1, &arg1);
-    set_var_from_num(num2, &arg2);
-
-    errcode = mod_var(&arg1, &arg2, &result_var);
+    errcode = mod_var(num1, num2, &result_var);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1154,9 +979,7 @@ numeric_mod(const Numeric num1, const Numeric num2, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
-    free_var(&arg2);
-    free_var(&arg1);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1169,29 +992,16 @@ numeric_mod(const Numeric num1, const Numeric num2, Numeric *result)
  *  Return the smaller of two numbers
  */
 numeric_errcode_t
-numeric_min(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_min(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  result_var;
-    numeric_errcode_t errcode;
-
-    init_var(&result_var);
-
     /*
      * Use cmp_numerics so that this will agree with the comparison operators,
      * particularly as regards comparisons involving NaN.
      */
     if (cmp_numerics(num1, num2) < 0)
-        set_var_from_num(num1, &result_var);
+        return make_result(num1, result);
     else
-        set_var_from_num(num2, &result_var);
-
-    errcode = make_result(&result_var, result);
-    if (errcode != NUMERIC_ERRCODE_NO_ERROR)
-        return errcode;
-
-    free_var(&result_var);
-
-    return NUMERIC_ERRCODE_NO_ERROR;
+        return make_result(num2, result);
 }
 
 
@@ -1201,29 +1011,16 @@ numeric_min(const Numeric num1, const Numeric num2, Numeric *result)
  *  Return the larger of two numbers
  */
 numeric_errcode_t
-numeric_max(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_max(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  result_var;
-    numeric_errcode_t errcode;
-
-    init_var(&result_var);
-
     /*
      * Use cmp_numerics so that this will agree with the comparison operators,
      * particularly as regards comparisons involving NaN.
      */
     if (cmp_numerics(num1, num2) > 0)
-        set_var_from_num(num1, &result_var);
+        return make_result(num1, result);
     else
-        set_var_from_num(num2, &result_var);
-
-    errcode = make_result(&result_var, result);
-    if (errcode != NUMERIC_ERRCODE_NO_ERROR)
-        return errcode;
-
-    free_var(&result_var);
-
-    return NUMERIC_ERRCODE_NO_ERROR;
+        return make_result(num2, result);
 }
 
 
@@ -1241,10 +1038,9 @@ numeric_max(const Numeric num1, const Numeric num2, Numeric *result)
  *  Compute the square root of a numeric.
  */
 numeric_errcode_t
-numeric_sqrt(const Numeric num, Numeric *result)
+numeric_sqrt(const numeric *num, numeric *result)
 {
-    NumericVar  arg;
-    NumericVar  result_var;
+    numeric  result_var;
     int         sweight;
     int         rscale;
     numeric_errcode_t errcode;
@@ -1260,23 +1056,20 @@ numeric_sqrt(const Numeric num, Numeric *result)
      * to give at least NUMERIC_MIN_SIG_DIGITS significant digits; but in any
      * case not less than the input's dscale.
      */
-    init_var(&arg);
-    init_var(&result_var);
-
-    set_var_from_num(num, &arg);
+    numeric_init(&result_var);
 
     /* Assume the input was normalized, so arg.weight is accurate */
-    sweight = (arg.weight + 1) * DEC_DIGITS / 2 - 1;
+    sweight = (num->weight + 1) * DEC_DIGITS / 2 - 1;
 
     rscale = NUMERIC_MIN_SIG_DIGITS - sweight;
-    rscale = Max(rscale, arg.dscale);
+    rscale = Max(rscale, num->dscale);
     rscale = Max(rscale, NUMERIC_MIN_DISPLAY_SCALE);
     rscale = Min(rscale, NUMERIC_MAX_DISPLAY_SCALE);
 
     /*
      * Let sqrt_var() do the calculation and return the result_var.
      */
-    errcode = sqrt_var(&arg, &result_var, rscale);
+    errcode = sqrt_var(num, &result_var, rscale);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1284,8 +1077,7 @@ numeric_sqrt(const Numeric num, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
-    free_var(&arg);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1297,10 +1089,9 @@ numeric_sqrt(const Numeric num, Numeric *result)
  *  Raise e to the power of x
  */
 numeric_errcode_t
-numeric_exp(const Numeric num, Numeric *result)
+numeric_exp(const numeric *num, numeric *result)
 {
-    NumericVar  arg;
-    NumericVar  result_var;
+    numeric  result_var;
     int         rscale;
     double      val;
     numeric_errcode_t errcode;
@@ -1316,13 +1107,10 @@ numeric_exp(const Numeric num, Numeric *result)
      * to give at least NUMERIC_MIN_SIG_DIGITS significant digits; but in any
      * case not less than the input's dscale.
      */
-    init_var(&arg);
-    init_var(&result_var);
-
-    set_var_from_num(num, &arg);
+    numeric_init(&result_var);
 
     /* convert input to double, ignoring overflow */
-    errcode = numericvar_to_double_no_overflow(&arg, &val);
+    errcode = numericvar_to_double_no_overflow(num, &val);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1337,14 +1125,14 @@ numeric_exp(const Numeric num, Numeric *result)
     val = Min(val, NUMERIC_MAX_RESULT_SCALE);
 
     rscale = NUMERIC_MIN_SIG_DIGITS - (int) val;
-    rscale = Max(rscale, arg.dscale);
+    rscale = Max(rscale, num->dscale);
     rscale = Max(rscale, NUMERIC_MIN_DISPLAY_SCALE);
     rscale = Min(rscale, NUMERIC_MAX_DISPLAY_SCALE);
 
     /*
      * Let exp_var() do the calculation and return the result_var.
      */
-    errcode = exp_var(&arg, &result_var, rscale);
+    errcode = exp_var(num, &result_var, rscale);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1352,8 +1140,7 @@ numeric_exp(const Numeric num, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
-    free_var(&arg);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1365,10 +1152,9 @@ numeric_exp(const Numeric num, Numeric *result)
  *  Compute the natural logarithm of x
  */
 numeric_errcode_t
-numeric_ln(const Numeric num, Numeric *result)
+numeric_ln(const numeric *num, numeric *result)
 {
-    NumericVar  arg;
-    NumericVar  result_var;
+    numeric  result_var;
     int         dec_digits;
     int         rscale;
     numeric_errcode_t errcode;
@@ -1379,13 +1165,10 @@ numeric_ln(const Numeric num, Numeric *result)
     if (NUMERIC_IS_NAN(num))
         return make_result(&const_nan, result);
 
-    init_var(&arg);
-    init_var(&result_var);
-
-    set_var_from_num(num, &arg);
+    numeric_init(&result_var);
 
     /* Approx decimal digits before decimal point */
-    dec_digits = (arg.weight + 1) * DEC_DIGITS;
+    dec_digits = (num->weight + 1) * DEC_DIGITS;
 
     if (dec_digits > 1)
         rscale = NUMERIC_MIN_SIG_DIGITS - (int) log10(dec_digits - 1);
@@ -1394,11 +1177,11 @@ numeric_ln(const Numeric num, Numeric *result)
     else
         rscale = NUMERIC_MIN_SIG_DIGITS;
 
-    rscale = Max(rscale, arg.dscale);
+    rscale = Max(rscale, num->dscale);
     rscale = Max(rscale, NUMERIC_MIN_DISPLAY_SCALE);
     rscale = Min(rscale, NUMERIC_MAX_DISPLAY_SCALE);
 
-    errcode = ln_var(&arg, &result_var, rscale);
+    errcode = ln_var(num, &result_var, rscale);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1406,8 +1189,7 @@ numeric_ln(const Numeric num, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
-    free_var(&arg);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1418,10 +1200,9 @@ numeric_ln(const Numeric num, Numeric *result)
  *  Compute the logarithm of x in a base 10
  */
 numeric_errcode_t
-numeric_log10(const Numeric num, Numeric *result)
+numeric_log10(const numeric *num, numeric *result)
 {
-    NumericVar  arg;
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     /*
@@ -1433,16 +1214,13 @@ numeric_log10(const Numeric num, Numeric *result)
     /*
      * Initialize things
      */
-    init_var(&arg);
-    init_var(&result_var);
-
-    set_var_from_num(num, &arg);
+    numeric_init(&result_var);
 
     /*
      * Call log_var() to compute and return the result_var; note it handles scale
      * selection itself.
      */
-    errcode = log_var(&const_ten, &arg, &result_var);
+    errcode = log_var(&const_ten, num, &result_var);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1450,8 +1228,7 @@ numeric_log10(const Numeric num, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
-    free_var(&arg);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1463,12 +1240,10 @@ numeric_log10(const Numeric num, Numeric *result)
  *  Raise b to the power of x
  */
 numeric_errcode_t
-numeric_power(const Numeric num1, const Numeric num2, Numeric *result)
+numeric_power(const numeric *num1, const numeric *num2, numeric *result)
 {
-    NumericVar  arg1;
-    NumericVar  arg2;
-    NumericVar  arg2_trunc;
-    NumericVar  result_var;
+    numeric  arg2_trunc;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
     /*
@@ -1480,14 +1255,10 @@ numeric_power(const Numeric num1, const Numeric num2, Numeric *result)
     /*
      * Initialize things
      */
-    init_var(&arg1);
-    init_var(&arg2);
-    init_var(&arg2_trunc);
-    init_var(&result_var);
+    numeric_init(&arg2_trunc);
+    numeric_init(&result_var);
 
-    set_var_from_num(num1, &arg1);
-    set_var_from_num(num2, &arg2);
-    set_var_from_var(&arg2, &arg2_trunc);
+    set_var_from_var(num2, &arg2_trunc);
 
     trunc_var(&arg2_trunc, 0);
 
@@ -1496,19 +1267,19 @@ numeric_power(const Numeric num1, const Numeric num2, Numeric *result)
      * certain error conditions.  Specifically, we don't return a
      * divide-by-zero error code for 0 ^ -1.
      */
-    if (cmp_var(&arg1, &const_zero) == 0 &&
-        cmp_var(&arg2, &const_zero) < 0)
+    if (cmp_var(num1, &const_zero) == 0 &&
+        cmp_var(num2, &const_zero) < 0)
         return NUMERIC_ERRCODE_INVALID_ARGUMENT;
 
-    if (cmp_var(&arg1, &const_zero) < 0 &&
-        cmp_var(&arg2, &arg2_trunc) != 0)
+    if (cmp_var(num1, &const_zero) < 0 &&
+        cmp_var(num2, &arg2_trunc) != 0)
         return NUMERIC_ERRCODE_INVALID_ARGUMENT;
 
     /*
      * Call power_var() to compute and return the result_var; note it handles
      * scale selection itself.
      */
-    errcode = power_var(&arg1, &arg2, &result_var);
+    errcode = power_var(num1, num2, &result_var);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
@@ -1516,10 +1287,8 @@ numeric_power(const Numeric num1, const Numeric num2, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
-    free_var(&arg2);
-    free_var(&arg2_trunc);
-    free_var(&arg1);
+    numeric_dispose(&result_var);
+    numeric_dispose(&arg2_trunc);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1534,12 +1303,12 @@ numeric_power(const Numeric num1, const Numeric num2, Numeric *result)
 
 
 numeric_errcode_t
-numeric_from_int32(int32_t val, Numeric *result)
+numeric_from_int32(int32_t val, numeric *result)
 {
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
-    init_var(&result_var);
+    numeric_init(&result_var);
 
     int64_to_numericvar((int64_t) val, &result_var);
 
@@ -1547,38 +1316,38 @@ numeric_from_int32(int32_t val, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
 
 numeric_errcode_t
-numeric_to_int32(const Numeric num, int32_t *result)
+numeric_to_int32(const numeric *num, int32_t *result)
 {
-    NumericVar  x;
+    numeric  x;
     numeric_errcode_t errcode;
 
     if (NUMERIC_IS_NAN(num))
         return NUMERIC_ERRCODE_INVALID_ARGUMENT;
 
     /* Convert to variable format, then convert to int4 */
-    init_var(&x);
-    set_var_from_num(num, &x);
+    numeric_init(&x);
+    set_var_from_var(num, &x);
     errcode = numericvar_to_int32(&x, result);
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
-    free_var(&x);
+    numeric_dispose(&x);
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
 /*
- * Given a NumericVar, convert it to an int32. If the NumericVar
+ * Given a numeric, convert it to an int32. If the numeric
  * exceeds the range of an int32, raise the appropriate error via
- * ereport(). The input NumericVar is *not* free'd.
+ * ereport(). The input numeric is *not* free'd.
  */
 static numeric_errcode_t
-numericvar_to_int32(NumericVar *var, int32_t *result)
+numericvar_to_int32(numeric *var, int32_t *result)
 {
     int64_t     val;
 
@@ -1596,12 +1365,12 @@ numericvar_to_int32(NumericVar *var, int32_t *result)
 }
 
 numeric_errcode_t
-numeric_from_int64(int64_t val, Numeric *result)
+numeric_from_int64(int64_t val, numeric *result)
 {
-    NumericVar  result_var;
+    numeric  result_var;
     numeric_errcode_t errcode;
 
-    init_var(&result_var);
+    numeric_init(&result_var);
 
     int64_to_numericvar(val, &result_var);
 
@@ -1609,28 +1378,28 @@ numeric_from_int64(int64_t val, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
 
 numeric_errcode_t
-numeric_to_int64(const Numeric num, int64_t *result)
+numeric_to_int64(const numeric *num, int64_t *result)
 {
-    NumericVar  x;
+    numeric  x;
 
     if (NUMERIC_IS_NAN(num))
         return NUMERIC_ERRCODE_INVALID_ARGUMENT;
 
     /* Convert to variable format and thence to int8 */
-    init_var(&x);
-    set_var_from_num(num, &x);
+    numeric_init(&x);
+    set_var_from_var(num, &x);
 
     if (!numericvar_to_int64(&x, result))
         return NUMERIC_ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
 
-    free_var(&x);
+    numeric_dispose(&x);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -1638,9 +1407,9 @@ numeric_to_int64(const Numeric num, int64_t *result)
 
 
 numeric_errcode_t
-numeric_from_double(double val, Numeric *result)
+numeric_from_double(double val, numeric *result)
 {
-    NumericVar  result_var;
+    numeric  result_var;
     char        buf[DBL_DIG + 100];
     numeric_errcode_t errcode;
 
@@ -1649,7 +1418,7 @@ numeric_from_double(double val, Numeric *result)
 
     sprintf(buf, "%.*g", DBL_DIG, val);
 
-    init_var(&result_var);
+    numeric_init(&result_var);
 
     /* Assume we need not worry about leading/trailing spaces */
     errcode = set_var_from_str(buf, buf, &result_var, NULL);
@@ -1660,14 +1429,14 @@ numeric_from_double(double val, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
 
 numeric_errcode_t
-numeric_to_double(const Numeric num, double *result)
+numeric_to_double(const numeric *num, double *result)
 {
     char       *tmp;
     double      val;
@@ -1695,9 +1464,9 @@ numeric_to_double(const Numeric num, double *result)
 
 
 numeric_errcode_t
-numeric_from_float(float val, Numeric *result)
+numeric_from_float(float val, numeric *result)
 {
-    NumericVar  result_var;
+    numeric  result_var;
     char        buf[FLT_DIG + 100];
     numeric_errcode_t errcode;
 
@@ -1706,7 +1475,7 @@ numeric_from_float(float val, Numeric *result)
 
     sprintf(buf, "%.*g", FLT_DIG, val);
 
-    init_var(&result_var);
+    numeric_init(&result_var);
 
     /* Assume we need not worry about leading/trailing spaces */
     errcode = set_var_from_str(buf, buf, &result_var, NULL);
@@ -1717,14 +1486,14 @@ numeric_from_float(float val, Numeric *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&result_var);
+    numeric_dispose(&result_var);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
 
 numeric_errcode_t
-numeric_to_float(const Numeric num, float *result)
+numeric_to_float(const numeric *num, float *result)
 {
     char       *tmp;
     numeric_errcode_t errcode;
@@ -1757,51 +1526,15 @@ numeric_to_float(const Numeric num, float *result)
  */
 
 #ifdef NUMERIC_DEBUG
-
-/*
- * dump_numeric() - Dump a value in the db storage format for debugging
- */
-static void
-dump_numeric(const char *str, Numeric num)
-{
-    NumericDigit *digits = NUMERIC_DIGITS(num);
-    int         ndigits;
-    int         i;
-
-    ndigits = NUMERIC_NDIGITS(num);
-
-    printf("%s: NUMERIC w=%d d=%d ", str, num->n_weight, NUMERIC_DSCALE(num));
-    switch (NUMERIC_SIGN(num))
-    {
-        case NUMERIC_POS:
-            printf("POS");
-            break;
-        case NUMERIC_NEG:
-            printf("NEG");
-            break;
-        case NUMERIC_NAN:
-            printf("NaN");
-            break;
-        default:
-            printf("SIGN=0x%x", NUMERIC_SIGN(num));
-            break;
-    }
-
-    for (i = 0; i < ndigits; i++)
-        printf(" %0*d", DEC_DIGITS, digits[i]);
-    printf("\n");
-}
-
-
 /*
  * dump_var() - Dump a value in the variable format for debugging
  */
 static void
-dump_var(const char *str, NumericVar *var)
+dump_var(const char *str, numeric *var)
 {
     int         i;
 
-    printf("%s: VAR w=%d d=%d ", str, var->weight, var->dscale);
+    printf("%s: numeric w=%d d=%d ", str, var->weight, var->dscale);
     switch (var->sign)
     {
         case NUMERIC_POS:
@@ -1838,12 +1571,37 @@ dump_var(const char *str, NumericVar *var)
 
 
 /*
+ * numeric_init() -
+ *
+ *  Initialize
+ */
+void
+numeric_init(numeric *var)
+{
+    memset(var, 0, sizeof(numeric));
+}
+
+/*
+ * numeric_dispose() -
+ *
+ *  Return the digit buffer of a variable to the free pool
+ */
+void
+numeric_dispose(numeric *var)
+{
+    digitbuf_free(var->buf);
+    var->buf = NULL;
+    var->digits = NULL;
+    var->sign = NUMERIC_NAN;
+}
+
+/*
  * alloc_var() -
  *
  *  Allocate a digit buffer of ndigits digits (plus a spare digit for rounding)
  */
 static void
-alloc_var(NumericVar *var, int ndigits)
+alloc_var(numeric *var, int ndigits)
 {
     digitbuf_free(var->buf);
     var->buf = digitbuf_alloc(ndigits + 1);
@@ -1853,20 +1611,6 @@ alloc_var(NumericVar *var, int ndigits)
 }
 
 
-/*
- * free_var() -
- *
- *  Return the digit buffer of a variable to the free pool
- */
-static void
-free_var(NumericVar *var)
-{
-    digitbuf_free(var->buf);
-    var->buf = NULL;
-    var->digits = NULL;
-    var->sign = NUMERIC_NAN;
-}
-
 
 /*
  * zero_var() -
@@ -1875,7 +1619,7 @@ free_var(NumericVar *var)
  *  Note: its dscale is not touched.
  */
 static void
-zero_var(NumericVar *var)
+zero_var(numeric *var)
 {
     digitbuf_free(var->buf);
     var->buf = NULL;
@@ -1899,7 +1643,7 @@ zero_var(NumericVar *var)
  * reports.  (Typically cp would be the same except advanced over spaces.)
  */
 static numeric_errcode_t
-set_var_from_str(const char *str, const char *cp, NumericVar *dest,
+set_var_from_str(const char *str, const char *cp, numeric *dest,
     const char **result)
 {
     bool        have_dp = false;
@@ -2040,34 +1784,12 @@ set_var_from_str(const char *str, const char *cp, NumericVar *dest,
 
 
 /*
- * set_var_from_num() -
- *
- *  Convert the packed db format into a variable
- */
-static void
-set_var_from_num(Numeric num, NumericVar *dest)
-{
-    int         ndigits;
-
-    ndigits = NUMERIC_NDIGITS(num);
-
-    alloc_var(dest, ndigits);
-
-    dest->weight = num->n_weight;
-    dest->sign = NUMERIC_SIGN(num);
-    dest->dscale = NUMERIC_DSCALE(num);
-
-    memcpy(dest->digits, num->n_data, ndigits * sizeof(NumericDigit));
-}
-
-
-/*
  * set_var_from_var() -
  *
- *  Copy one variable into another
+ *  Copy one variable into another with an extra digit space for carry.
  */
 static void
-set_var_from_var(NumericVar *value, NumericVar *dest)
+set_var_from_var(const numeric *value, numeric *dest)
 {
     NumericDigit *newbuf;
 
@@ -2077,9 +1799,29 @@ set_var_from_var(NumericVar *value, NumericVar *dest)
 
     digitbuf_free(dest->buf);
 
-    memmove(dest, value, sizeof(NumericVar));
+    memmove(dest, value, sizeof(numeric));
     dest->buf = newbuf;
     dest->digits = newbuf + 1;
+}
+
+/*
+ * copy_var() -
+ *
+ *  Copy one variable into another without an extra digit space for carry.
+ */
+static void
+copy_var(const numeric *value, numeric *dest)
+{
+    NumericDigit *newbuf;
+
+    newbuf = digitbuf_alloc(value->ndigits);
+    memcpy(newbuf, value->digits, value->ndigits * sizeof(NumericDigit));
+
+    digitbuf_free(dest->buf);
+
+    memmove(dest, value, sizeof(numeric));
+    dest->buf = newbuf;
+    dest->digits = newbuf;
 }
 
 
@@ -2091,7 +1833,7 @@ set_var_from_var(NumericVar *value, NumericVar *dest)
  *  Returns a malloc'd string.
  */
 static char *
-get_str_from_var(NumericVar *var, int dscale)
+get_str_from_var(numeric *var, int dscale)
 {
     char       *str;
     char       *cp;
@@ -2251,11 +1993,11 @@ get_str_from_var(NumericVar *var, int dscale)
  *  Returns a malloc'd string.
  */
 static char *
-get_str_from_var_sci(NumericVar *var, int rscale)
+get_str_from_var_sci(numeric *var, int rscale)
 {
     int32_t     exponent;
-    NumericVar  denominator;
-    NumericVar  significand;
+    numeric  denominator;
+    numeric  significand;
     int         denom_scale;
     size_t      len;
     char       *str;
@@ -2303,16 +2045,16 @@ get_str_from_var_sci(NumericVar *var, int rscale)
     else
         denom_scale = 0;
 
-    init_var(&denominator);
-    init_var(&significand);
+    numeric_init(&denominator);
+    numeric_init(&significand);
 
     int64_to_numericvar((int64_t) 10, &denominator);
     power_var_int(&denominator, exponent, &denominator, denom_scale);
     div_var(var, &denominator, &significand, rscale, true);
     sig_out = get_str_from_var(&significand, rscale);
 
-    free_var(&denominator);
-    free_var(&significand);
+    numeric_dispose(&denominator);
+    numeric_dispose(&significand);
 
     /*
      * Allocate space for the result.
@@ -2334,31 +2076,24 @@ get_str_from_var_sci(NumericVar *var, int rscale)
 /*
  * make_result() -
  *
- *  Create the packed db numeric format in malloc()'d memory from
+ *  Create the numeric for the result whose digit buf malloc()'d memory from
  *  a variable.
  */
 static numeric_errcode_t
-make_result(NumericVar *var, Numeric *result)
+make_result(const numeric *var, numeric *result)
 {
     NumericDigit *digits = var->digits;
     int         weight = var->weight;
-    int         sign = var->sign;
-    int         n;
-    size_t      len;
+    int         n = var->ndigits;
+    NumericDigit *res_digits;
 
-    if (sign == NUMERIC_NAN)
+    if (NUMERIC_IS_NAN(var))
     {
-        *result = (Numeric) malloc(NUMERIC_HDRSZ);
-
-        (*result)->n_length = NUMERIC_HDRSZ;
-        (*result)->n_weight = 0;
-        (*result)->n_sign_dscale = NUMERIC_NAN;
-
-        dump_numeric("make_result()", result);
+        digitbuf_free(result->buf);
+        *result = const_nan;
+        dump_var("make_result()", result);
         return NUMERIC_ERRCODE_NO_ERROR;
     }
-
-    n = var->ndigits;
 
     /* truncate leading zeroes */
     while (n > 0 && *digits == 0)
@@ -2374,25 +2109,30 @@ make_result(NumericVar *var, Numeric *result)
     /* If zero result, force to weight=0 and positive sign */
     if (n == 0)
     {
-        weight = 0;
-        sign = NUMERIC_POS;
+        zero_var(result);
+        return NUMERIC_ERRCODE_NO_ERROR;
     }
 
-    /* Build the result */
-    len = NUMERIC_HDRSZ + n * sizeof(NumericDigit);
-    *result = (Numeric) malloc(len);
-    (*result)->n_length = len;
-    (*result)->n_weight = weight;
-    (*result)->n_sign_dscale = sign | (var->dscale & NUMERIC_DSCALE_MASK);
-
-    memcpy((*result)->n_data, digits, n * sizeof(NumericDigit));
-
     /* Check for overflow of int16 fields */
-    if ((*result)->n_weight != weight ||
-        NUMERIC_DSCALE(*result) != var->dscale)
+    if (weight < INT16_MIN || INT16_MAX < weight
+        || var->dscale < INT16_MIN || INT16_MAX < var->dscale)
         return NUMERIC_ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
 
-    dump_numeric("make_result()", result);
+    /* Build the result */
+    res_digits = (NumericDigit *)malloc(n * sizeof(NumericDigit));
+    if (!res_digits)
+        return NUMERIC_ERRCODE_OUT_OF_MEMORY;
+
+    memcpy(res_digits, digits, n * sizeof(NumericDigit));
+
+    digitbuf_free(result->buf);
+    result->ndigits = n;
+    result->weight = weight;
+    result->sign = var->sign;
+    result->dscale = var->dscale;
+    result->buf = result->digits = res_digits;
+
+    dump_var("make_result()", result);
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
@@ -2402,7 +2142,7 @@ make_result(NumericVar *var, Numeric *result)
  *  Do bounds checking and rounding according to the precision and scale.
  */
 static numeric_errcode_t
-check_bounds_and_round(NumericVar *var, int precision, int scale)
+check_bounds_and_round(numeric *var, int precision, int scale)
 {
     int         maxdigits;
     int         ddigits;
@@ -2469,7 +2209,7 @@ check_bounds_and_round(NumericVar *var, int precision, int scale)
  *  CAUTION: var's contents may be modified by rounding!
  */
 static bool
-numericvar_to_int64(NumericVar *var, int64_t *result)
+numericvar_to_int64(numeric *var, int64_t *result)
 {
     NumericDigit *digits;
     int         ndigits;
@@ -2531,7 +2271,7 @@ numericvar_to_int64(NumericVar *var, int64_t *result)
  * Convert int8 value to numeric.
  */
 static void
-int64_to_numericvar(int64_t val, NumericVar *var)
+int64_to_numericvar(int64_t val, numeric *var)
 {
     uint64_t      uval,
                 newuval;
@@ -2572,15 +2312,19 @@ int64_to_numericvar(int64_t val, NumericVar *var)
     var->weight = ndigits - 1;
 }
 
-/* As above, but work from a NumericVar */
+/* As above, but work from a numeric */
 static numeric_errcode_t
-numericvar_to_double_no_overflow(NumericVar *var, double *result)
+numericvar_to_double_no_overflow(const numeric *var, double *result)
 {
+    numeric     num;
     char       *tmp;
     double      val;
     char       *endptr;
 
-    tmp = get_str_from_var(var, var->dscale);
+    numeric_init(&num);
+    set_var_from_var(var, &num);
+    tmp = get_str_from_var(&num, num.dscale);
+    numeric_dispose(&num);
 
     /* unlike doublein, we ignore ERANGE from strtod */
     val = strtod(tmp, &endptr);
@@ -2604,7 +2348,7 @@ numericvar_to_double_no_overflow(NumericVar *var, double *result)
  *  truncated to no digits.
  */
 static int
-cmp_var(const NumericVar *var1, const NumericVar *var2)
+cmp_var(const numeric *var1, const numeric *var2)
 {
     return cmp_var_common(var1->digits, var1->ndigits,
                           var1->weight, var1->sign,
@@ -2616,7 +2360,7 @@ cmp_var(const NumericVar *var1, const NumericVar *var2)
  * cmp_var_common() -
  *
  *  Main routine of cmp_var(). This function can be used by both
- *  NumericVar and Numeric.
+ *  numeric and Numeric.
  */
 static int
 cmp_var_common(const NumericDigit *var1digits, int var1ndigits,
@@ -2662,7 +2406,7 @@ cmp_var_common(const NumericDigit *var1digits, int var1ndigits,
  *  result might point to one of the operands too without danger.
  */
 static void
-add_var(NumericVar *var1, NumericVar *var2, NumericVar *result)
+add_var(const numeric *var1, const numeric *var2, numeric *result)
 {
     /*
      * Decide on the signs of the two variables what to do
@@ -2779,7 +2523,7 @@ add_var(NumericVar *var1, NumericVar *var2, NumericVar *result)
  *  result might point to one of the operands too without danger.
  */
 static void
-sub_var(NumericVar *var1, NumericVar *var2, NumericVar *result)
+sub_var(const numeric *var1, const numeric *var2, numeric *result)
 {
     /*
      * Decide on the signs of the two variables what to do
@@ -2900,7 +2644,7 @@ sub_var(NumericVar *var1, NumericVar *var2, NumericVar *result)
  *  in result.  Result is rounded to no more than rscale fractional digits.
  */
 static void
-mul_var(NumericVar *var1, NumericVar *var2, NumericVar *result,
+mul_var(const numeric *var1, const numeric *var2, numeric *result,
         int rscale)
 {
     int         res_ndigits;
@@ -3071,7 +2815,7 @@ mul_var(NumericVar *var1, NumericVar *var2, NumericVar *result,
  *  is truncated (towards zero) at that digit.
  */
 static numeric_errcode_t
-div_var(NumericVar *var1, NumericVar *var2, NumericVar *result,
+div_var(const numeric *var1, const numeric *var2, numeric *result,
         int rscale, bool round)
 {
     int         div_ndigits;
@@ -3350,7 +3094,7 @@ div_var(NumericVar *var1, NumericVar *var2, NumericVar *result,
  *  function calculation routines, where everything is approximate anyway.
  */
 static numeric_errcode_t
-div_var_fast(NumericVar *var1, NumericVar *var2, NumericVar *result,
+div_var_fast(numeric *var1, numeric *var2, numeric *result,
              int rscale, bool round)
 {
     int         div_ndigits;
@@ -3605,7 +3349,7 @@ div_var_fast(NumericVar *var1, NumericVar *var2, NumericVar *result,
  * Returns the appropriate result scale for the division result.
  */
 static int
-select_div_scale(NumericVar *var1, NumericVar *var2)
+select_div_scale(const numeric *var1, const numeric *var2)
 {
     int         weight1,
                 weight2,
@@ -3674,12 +3418,12 @@ select_div_scale(NumericVar *var1, NumericVar *var2)
  *  Calculate the modulo of two numerics at variable level
  */
 static numeric_errcode_t
-mod_var(NumericVar *var1, NumericVar *var2, NumericVar *result)
+mod_var(const numeric *var1, const numeric *var2, numeric *result)
 {
-    NumericVar  tmp;
+    numeric  tmp;
     numeric_errcode_t errcode;
 
-    init_var(&tmp);
+    numeric_init(&tmp);
 
     /* ---------
      * We do this using the equation
@@ -3695,7 +3439,7 @@ mod_var(NumericVar *var1, NumericVar *var2, NumericVar *result)
 
     sub_var(var1, &tmp, result);
 
-    free_var(&tmp);
+    numeric_dispose(&tmp);
     return NUMERIC_ERRCODE_NO_ERROR;
 }
 
@@ -3707,11 +3451,11 @@ mod_var(NumericVar *var1, NumericVar *var2, NumericVar *result)
  *  on variable level
  */
 static void
-ceil_var(NumericVar *var, NumericVar *result)
+ceil_var(const numeric *var, numeric *result)
 {
-    NumericVar  tmp;
+    numeric  tmp;
 
-    init_var(&tmp);
+    numeric_init(&tmp);
     set_var_from_var(var, &tmp);
 
     trunc_var(&tmp, 0);
@@ -3720,7 +3464,7 @@ ceil_var(NumericVar *var, NumericVar *result)
         add_var(&tmp, &const_one, &tmp);
 
     set_var_from_var(&tmp, result);
-    free_var(&tmp);
+    numeric_dispose(&tmp);
 }
 
 
@@ -3731,11 +3475,11 @@ ceil_var(NumericVar *var, NumericVar *result)
  *  on variable level
  */
 static void
-floor_var(NumericVar *var, NumericVar *result)
+floor_var(const numeric *var, numeric *result)
 {
-    NumericVar  tmp;
+    numeric  tmp;
 
-    init_var(&tmp);
+    numeric_init(&tmp);
     set_var_from_var(var, &tmp);
 
     trunc_var(&tmp, 0);
@@ -3744,7 +3488,7 @@ floor_var(NumericVar *var, NumericVar *result)
         sub_var(&tmp, &const_one, &tmp);
 
     set_var_from_var(&tmp, result);
-    free_var(&tmp);
+    numeric_dispose(&tmp);
 }
 
 
@@ -3754,11 +3498,11 @@ floor_var(NumericVar *var, NumericVar *result)
  *  Compute the square root of x using Newton's algorithm
  */
 static numeric_errcode_t
-sqrt_var(NumericVar *arg, NumericVar *result, int rscale)
+sqrt_var(const numeric *arg, numeric *result, int rscale)
 {
-    NumericVar  tmp_arg;
-    NumericVar  tmp_val;
-    NumericVar  last_val;
+    numeric  tmp_arg;
+    numeric  tmp_val;
+    numeric  last_val;
     int         local_rscale;
     int         stat;
 
@@ -3779,9 +3523,9 @@ sqrt_var(NumericVar *arg, NumericVar *result, int rscale)
     if (stat < 0)
         return NUMERIC_ERRCODE_INVALID_ARGUMENT;
 
-    init_var(&tmp_arg);
-    init_var(&tmp_val);
-    init_var(&last_val);
+    numeric_init(&tmp_arg);
+    numeric_init(&tmp_val);
+    numeric_init(&last_val);
 
     /* Copy arg in case it is the same var as result */
     set_var_from_var(arg, &tmp_arg);
@@ -3810,9 +3554,9 @@ sqrt_var(NumericVar *arg, NumericVar *result, int rscale)
         set_var_from_var(result, &last_val);
     }
 
-    free_var(&last_val);
-    free_var(&tmp_val);
-    free_var(&tmp_arg);
+    numeric_dispose(&last_val);
+    numeric_dispose(&tmp_val);
+    numeric_dispose(&tmp_arg);
 
     /* Round to requested precision */
     round_var(result, rscale);
@@ -3827,9 +3571,9 @@ sqrt_var(NumericVar *arg, NumericVar *result, int rscale)
  *  Raise e to the power of x
  */
 static numeric_errcode_t
-exp_var(NumericVar *arg, NumericVar *result, int rscale)
+exp_var(const numeric *arg, numeric *result, int rscale)
 {
-    NumericVar  x;
+    numeric  x;
     int         xintval;
     bool        xneg = false;
     int         local_rscale;
@@ -3843,7 +3587,7 @@ exp_var(NumericVar *arg, NumericVar *result, int rscale)
      * done by repeated multiplications in power_var_int.
      *----------
      */
-    init_var(&x);
+    numeric_init(&x);
 
     set_var_from_var(arg, &x);
 
@@ -3879,13 +3623,13 @@ exp_var(NumericVar *arg, NumericVar *result, int rscale)
     /* If there's an integer part, multiply by e^xint */
     if (xintval > 0)
     {
-        NumericVar  e;
+        numeric  e;
 
-        init_var(&e);
+        numeric_init(&e);
         exp_var_internal(&const_one, &e, local_rscale);
         power_var_int(&e, xintval, &e, local_rscale);
         mul_var(&e, result, result, local_rscale);
-        free_var(&e);
+        numeric_dispose(&e);
     }
 
     /* Compensate for input sign, and round to requested rscale */
@@ -3894,7 +3638,7 @@ exp_var(NumericVar *arg, NumericVar *result, int rscale)
     else
         round_var(result, rscale);
 
-    free_var(&x);
+    numeric_dispose(&x);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -3909,21 +3653,21 @@ exp_var(NumericVar *arg, NumericVar *result, int rscale)
  * *not* been rounded off; the caller must do that if wanted.
  */
 static void
-exp_var_internal(NumericVar *arg, NumericVar *result, int rscale)
+exp_var_internal(const numeric *arg, numeric *result, int rscale)
 {
-    NumericVar  x;
-    NumericVar  xpow;
-    NumericVar  ifac;
-    NumericVar  elem;
-    NumericVar  ni;
+    numeric  x;
+    numeric  xpow;
+    numeric  ifac;
+    numeric  elem;
+    numeric  ni;
     int         ndiv2 = 0;
     int         local_rscale;
 
-    init_var(&x);
-    init_var(&xpow);
-    init_var(&ifac);
-    init_var(&elem);
-    init_var(&ni);
+    numeric_init(&x);
+    numeric_init(&xpow);
+    numeric_init(&ifac);
+    numeric_init(&elem);
+    numeric_init(&ni);
 
     set_var_from_var(arg, &x);
 
@@ -3969,11 +3713,11 @@ exp_var_internal(NumericVar *arg, NumericVar *result, int rscale)
     while (ndiv2-- > 0)
         mul_var(result, result, result, local_rscale);
 
-    free_var(&x);
-    free_var(&xpow);
-    free_var(&ifac);
-    free_var(&elem);
-    free_var(&ni);
+    numeric_dispose(&x);
+    numeric_dispose(&xpow);
+    numeric_dispose(&ifac);
+    numeric_dispose(&elem);
+    numeric_dispose(&ni);
 }
 
 
@@ -3983,13 +3727,13 @@ exp_var_internal(NumericVar *arg, NumericVar *result, int rscale)
  *  Compute the natural log of x
  */
 static numeric_errcode_t
-ln_var(NumericVar *arg, NumericVar *result, int rscale)
+ln_var(const numeric *arg, numeric *result, int rscale)
 {
-    NumericVar  x;
-    NumericVar  xx;
-    NumericVar  ni;
-    NumericVar  elem;
-    NumericVar  fact;
+    numeric  x;
+    numeric  xx;
+    numeric  ni;
+    numeric  elem;
+    numeric  fact;
     int         local_rscale;
     int         cmp;
 
@@ -3999,11 +3743,11 @@ ln_var(NumericVar *arg, NumericVar *result, int rscale)
 
     local_rscale = rscale + 8;
 
-    init_var(&x);
-    init_var(&xx);
-    init_var(&ni);
-    init_var(&elem);
-    init_var(&fact);
+    numeric_init(&x);
+    numeric_init(&xx);
+    numeric_init(&ni);
+    numeric_init(&elem);
+    numeric_init(&fact);
 
     set_var_from_var(arg, &x);
     set_var_from_var(&const_two, &fact);
@@ -4059,11 +3803,11 @@ ln_var(NumericVar *arg, NumericVar *result, int rscale)
     /* Compensate for argument range reduction, round to requested rscale */
     mul_var(result, &fact, result, rscale);
 
-    free_var(&x);
-    free_var(&xx);
-    free_var(&ni);
-    free_var(&elem);
-    free_var(&fact);
+    numeric_dispose(&x);
+    numeric_dispose(&xx);
+    numeric_dispose(&ni);
+    numeric_dispose(&elem);
+    numeric_dispose(&fact);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -4077,17 +3821,17 @@ ln_var(NumericVar *arg, NumericVar *result, int rscale)
  *  Note: this routine chooses dscale of the result.
  */
 static numeric_errcode_t
-log_var(NumericVar *base, NumericVar *num, NumericVar *result)
+log_var(const numeric *base, const numeric *num, numeric *result)
 {
-    NumericVar  ln_base;
-    NumericVar  ln_num;
+    numeric  ln_base;
+    numeric  ln_num;
     int         dec_digits;
     int         rscale;
     int         local_rscale;
     numeric_errcode_t errcode;
 
-    init_var(&ln_base);
-    init_var(&ln_num);
+    numeric_init(&ln_base);
+    numeric_init(&ln_num);
 
     /* Set scale for ln() calculations --- compare numeric_ln() */
 
@@ -4124,8 +3868,8 @@ log_var(NumericVar *base, NumericVar *num, NumericVar *result)
 
     div_var_fast(&ln_num, &ln_base, result, rscale, true);
 
-    free_var(&ln_num);
-    free_var(&ln_base);
+    numeric_dispose(&ln_num);
+    numeric_dispose(&ln_base);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -4139,10 +3883,10 @@ log_var(NumericVar *base, NumericVar *num, NumericVar *result)
  *  Note: this routine chooses dscale of the result.
  */
 static numeric_errcode_t
-power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
+power_var(const numeric *base, const numeric *exp, numeric *result)
 {
-    NumericVar  ln_base;
-    NumericVar  ln_num;
+    numeric  ln_base;
+    numeric  ln_num;
     int         dec_digits;
     int         rscale;
     int         local_rscale;
@@ -4153,11 +3897,11 @@ power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
     if (exp->ndigits == 0 || exp->ndigits <= exp->weight + 1)
     {
         /* exact integer, but does it fit in int? */
-        NumericVar  x;
+        numeric  x;
         int64_t       expval64;
 
         /* must copy because numericvar_to_int64() scribbles on input */
-        init_var(&x);
+        numeric_init(&x);
         set_var_from_var(exp, &x);
         if (numericvar_to_int64(&x, &expval64))
         {
@@ -4174,11 +3918,11 @@ power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
 
                 power_var_int(base, expval, result, rscale);
 
-                free_var(&x);
+                numeric_dispose(&x);
                 return NUMERIC_ERRCODE_NO_ERROR;
             }
         }
-        free_var(&x);
+        numeric_dispose(&x);
     }
 
     /*
@@ -4192,8 +3936,8 @@ power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
         return NUMERIC_ERRCODE_NO_ERROR;
     }
 
-    init_var(&ln_base);
-    init_var(&ln_num);
+    numeric_init(&ln_base);
+    numeric_init(&ln_num);
 
     /* Set scale for ln() calculation --- need extra accuracy here */
 
@@ -4246,8 +3990,8 @@ power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
     if (errcode != NUMERIC_ERRCODE_NO_ERROR)
         return errcode;
 
-    free_var(&ln_num);
-    free_var(&ln_base);
+    numeric_dispose(&ln_num);
+    numeric_dispose(&ln_base);
 
     return NUMERIC_ERRCODE_NO_ERROR;
 }
@@ -4258,10 +4002,10 @@ power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
  *  Raise base to the power of exp, where exp is an integer.
  */
 static void
-power_var_int(NumericVar *base, int exp, NumericVar *result, int rscale)
+power_var_int(const numeric *base, int exp, numeric *result, int rscale)
 {
     bool        neg;
-    NumericVar  base_prod;
+    numeric  base_prod;
     int         local_rscale;
 
     switch (exp)
@@ -4301,7 +4045,7 @@ power_var_int(NumericVar *base, int exp, NumericVar *result, int rscale)
 
     local_rscale = rscale + MUL_GUARD_DIGITS * 2;
 
-    init_var(&base_prod);
+    numeric_init(&base_prod);
     set_var_from_var(base, &base_prod);
 
     if (exp & 1)
@@ -4316,7 +4060,7 @@ power_var_int(NumericVar *base, int exp, NumericVar *result, int rscale)
             mul_var(&base_prod, result, result, local_rscale);
     }
 
-    free_var(&base_prod);
+    numeric_dispose(&base_prod);
 
     /* Compensate for input sign, and round to requested rscale */
     if (neg)
@@ -4345,7 +4089,7 @@ power_var_int(NumericVar *base, int exp, NumericVar *result, int rscale)
  * ----------
  */
 static int
-cmp_abs(NumericVar *var1, NumericVar *var2)
+cmp_abs(const numeric *var1, const numeric *var2)
 {
     return cmp_abs_common(var1->digits, var1->ndigits, var1->weight,
                           var2->digits, var2->ndigits, var2->weight);
@@ -4355,7 +4099,7 @@ cmp_abs(NumericVar *var1, NumericVar *var2)
  * cmp_abs_common() -
  *
  *  Main routine of cmp_abs(). This function can be used by both
- *  NumericVar and Numeric.
+ *  numeric and Numeric.
  * ----------
  */
 static int
@@ -4423,7 +4167,7 @@ cmp_abs_common(const NumericDigit *var1digits, int var1ndigits, int var1weight,
  *  result might point to one of the operands without danger.
  */
 static void
-add_abs(NumericVar *var1, NumericVar *var2, NumericVar *result)
+add_abs(const numeric *var1, const numeric *var2, numeric *result)
 {
     NumericDigit *res_buf;
     NumericDigit *res_digits;
@@ -4508,7 +4252,7 @@ add_abs(NumericVar *var1, NumericVar *var2, NumericVar *result)
  *  ABS(var1) MUST BE GREATER OR EQUAL ABS(var2) !!!
  */
 static void
-sub_abs(NumericVar *var1, NumericVar *var2, NumericVar *result)
+sub_abs(const numeric *var1, const numeric *var2, numeric *result)
 {
     NumericDigit *res_buf;
     NumericDigit *res_digits;
@@ -4590,7 +4334,7 @@ sub_abs(NumericVar *var1, NumericVar *var2, NumericVar *result)
  * rounding before the decimal point.
  */
 static void
-round_var(NumericVar *var, int rscale)
+round_var(numeric *var, int rscale)
 {
     NumericDigit *digits = var->digits;
     int         di;
@@ -4696,7 +4440,7 @@ round_var(NumericVar *var, int rscale)
  * truncation before the decimal point.
  */
 static void
-trunc_var(NumericVar *var, int rscale)
+trunc_var(numeric *var, int rscale)
 {
     int         di;
     int         ndigits;
@@ -4758,7 +4502,7 @@ trunc_var(NumericVar *var, int rscale)
  * Strip any leading and trailing zeroes from a numeric variable
  */
 static void
-strip_var(NumericVar *var)
+strip_var(numeric *var)
 {
     NumericDigit *digits = var->digits;
     int         ndigits = var->ndigits;

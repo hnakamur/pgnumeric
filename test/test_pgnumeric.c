@@ -3,121 +3,127 @@
 
 void test_numeric_from_str(void)
 {
-    Numeric x;
+    numeric x;
     char *str;
 
+    numeric_init(&x);
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
         numeric_from_str("0.0", 2, 1, &x));
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
-        numeric_to_str(x, -1, &str));
-    cut_assert_equal_string("0.0", str);
+        numeric_to_str(&x, -1, &str));
+    cut_assert_equal_string("0", str);
     free(str);
-    free(x);
+    numeric_dispose(&x);
 
+    numeric_init(&x);
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
         numeric_from_str("0.1", 2, 1, &x));
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
-        numeric_to_str(x, -1, &str));
+        numeric_to_str(&x, -1, &str));
     cut_assert_equal_string("0.1", str);
     free(str);
-    free(x);
+    numeric_dispose(&x);
 
+    numeric_init(&x);
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
         numeric_from_str("0.12", -1, -1, &x));
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
-        numeric_to_str(x, -1, &str));
+        numeric_to_str(&x, -1, &str));
     cut_assert_equal_string("0.12", str);
     free(str);
-    free(x);
+    numeric_dispose(&x);
 }
 
 void test_numeric_to_str_sci(void)
 {
-    Numeric x;
+    numeric x;
     char *str;
 
+    numeric_init(&x);
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
         numeric_from_str("0.12", 3, 2, &x));
 
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
-        numeric_to_str_sci(x, 1, &str));
+        numeric_to_str_sci(&x, 1, &str));
     cut_assert_equal_string("1.2e-01", str);
     free(str);
-    free(x);
+    numeric_dispose(&x);
 }
 
 #if 1
 #define TEST_UNARY(expected, func, arg) \
 do { \
-    Numeric x; \
-    Numeric r = NULL; \
-    Numeric expected_num; \
+    numeric x; \
+    numeric r; \
+    numeric expected_num; \
     char *str; \
  \
+    numeric_init(&expected_num); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((expected), -1, -1, &expected_num)); \
+    numeric_init(&x); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg), -1, -1, &x)); \
+    numeric_init(&r); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-        (func)(x, &r)); \
+        (func)(&x, &r)); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-        numeric_to_str(r, -1, &str)); \
+        numeric_to_str(&r, -1, &str)); \
     cut_assert_equal_string((expected), str); \
     free(str); \
-    if (r) { \
-        free(r); \
-    } \
-    free(x); \
-    free(expected_num); \
+    numeric_dispose(&r); \
+    numeric_dispose(&x); \
+    numeric_dispose(&expected_num); \
 } while (0)
 #else
 #define TEST_UNARY(expected, func, arg) \
 do { \
-    Numeric x; \
-    Numeric r = NULL; \
-    Numeric expected_num; \
+    numeric x; \
+    numeric r; \
+    numeric expected_num; \
     char *str; \
  \
+    numeric_init(&expected_num); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((expected), -1, -1, &expected_num)); \
+    numeric_init(&x); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg), -1, -1, &x)); \
+    numeric_init(&r); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-        (func)(x, &r)); \
-    if (numeric_cmp(expected_num, r) != 0) { \
+        (func)(&x, &r)); \
+    if (numeric_cmp(&expected_num, &r) != 0) { \
         cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-            numeric_to_str(r, -1, &str)); \
+            numeric_to_str(&r, -1, &str)); \
         cut_assert_equal_string((expected), str); \
         free(str); \
     } \
-    if (r) { \
-        free(r); \
-    } \
-    free(x); \
-    free(expected_num); \
+    numeric_dispose(&r); \
+    numeric_dispose(&x); \
+    numeric_dispose(&expected_num); \
 } while (0)
 #endif
 
 #define TEST_UNARY_ERR(expected, func, arg) \
 do { \
-    Numeric x; \
-    Numeric r = NULL; \
+    numeric x; \
+    numeric r; \
  \
+    numeric_init(&x); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg), -1, -1, &x)); \
+    numeric_init(&r); \
     cut_assert_equal_int((expected), \
-        (func)(x, &r)); \
-    if (r) { \
-        free(r); \
-    } \
-    free(x); \
+        (func)(&x, &r)); \
+    numeric_dispose(&r); \
+    numeric_dispose(&x); \
 } while (0)
 
 void test_numeric_abs(void)
 {
     TEST_UNARY("7.5", numeric_abs, "-7.5");
     TEST_UNARY("7.5", numeric_abs, "7.5");
-    TEST_UNARY("0.0", numeric_abs, "0.0");
+    TEST_UNARY("0", numeric_abs, "0.0");
     TEST_UNARY("NaN", numeric_abs, "NaN");
 }
 
@@ -125,7 +131,7 @@ void test_numeric_minus(void)
 {
     TEST_UNARY("7.5", numeric_minus, "-7.5");
     TEST_UNARY("-7.5", numeric_minus, "7.5");
-    TEST_UNARY("0.0", numeric_minus, "0.0");
+    TEST_UNARY("0", numeric_minus, "0.0");
     TEST_UNARY("NaN", numeric_minus, "NaN");
 }
 
@@ -133,7 +139,7 @@ void test_numeric_plus(void)
 {
     TEST_UNARY("-7.5", numeric_plus, "-7.5");
     TEST_UNARY("7.5", numeric_plus, "7.5");
-    TEST_UNARY("0.0", numeric_plus, "0.0");
+    TEST_UNARY("0", numeric_plus, "0.0");
     TEST_UNARY("NaN", numeric_plus, "NaN");
 }
 
@@ -147,22 +153,22 @@ void test_numeric_sign(void)
 
 #define TEST_SCALE(expected, func, arg, scale) \
 do { \
-    Numeric x; \
-    Numeric r; \
+    numeric x; \
+    numeric r; \
     char *str; \
  \
+    numeric_init(&x); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg), -1, -1, &x)); \
- \
+    numeric_init(&r); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-        (func)(x, (scale), &r)); \
- \
+        (func)(&x, (scale), &r)); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-        numeric_to_str(r, -1, &str)); \
+        numeric_to_str(&r, -1, &str)); \
     cut_assert_equal_string((expected), str); \
     free(str); \
-    free(r); \
-    free(x); \
+    numeric_dispose(&r); \
+    numeric_dispose(&x); \
 } while (0)
 
 void test_numeric_round(void)
@@ -223,19 +229,21 @@ void test_numeric_floor(void)
 
 #define TEST_CMP(expected, func, arg1, arg2) \
 do { \
-    Numeric x; \
-    Numeric y; \
+    numeric x; \
+    numeric y; \
  \
+    numeric_init(&x); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg1), -1, -1, &x)); \
+    numeric_init(&y); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg2), -1, -1, &y)); \
  \
     cut_assert_equal_int((expected), \
-        (func)(x, y)); \
+        (func)(&x, &y)); \
  \
-    free(x); \
-    free(y); \
+    numeric_dispose(&y); \
+    numeric_dispose(&x); \
 } while (0)
 
 void test_numeric_cmp(void)
@@ -311,51 +319,53 @@ void test_numeric_le(void)
 
 #define TEST_BINARY(expected, func, arg1, arg2) \
 do { \
-    Numeric x; \
-    Numeric y; \
-    Numeric r = NULL; \
+    numeric x; \
+    numeric y; \
+    numeric r; \
     char *str; \
  \
+    numeric_init(&x); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg1), -1, -1, &x)); \
+    numeric_init(&y); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg2), -1, -1, &y)); \
+    numeric_init(&r); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-        (func)(x, y, &r)); \
+        (func)(&x, &y, &r)); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
-        numeric_to_str(r, -1, &str)); \
+        numeric_to_str(&r, -1, &str)); \
     cut_assert_equal_string((expected), str); \
     free(str); \
-    if (r) { \
-        free(r); \
-    } \
-    free(y); \
-    free(x); \
+    numeric_dispose(&r); \
+    numeric_dispose(&y); \
+    numeric_dispose(&x); \
 } while (0)
 
 #define TEST_BINARY_ERR(expected, func, arg1, arg2) \
 do { \
-    Numeric x; \
-    Numeric y; \
-    Numeric r = NULL; \
+    numeric x; \
+    numeric y; \
+    numeric r; \
  \
+    numeric_init(&x); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg1), -1, -1, &x)); \
+    numeric_init(&y); \
     cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR, \
         numeric_from_str((arg2), -1, -1, &y)); \
+    numeric_init(&r); \
     cut_assert_equal_int((expected), \
-        (func)(x, y, &r)); \
-    if (r) { \
-        free(r); \
-    } \
-    free(y); \
-    free(x); \
+        (func)(&x, &y, &r)); \
+    numeric_dispose(&r); \
+    numeric_dispose(&y); \
+    numeric_dispose(&x); \
 } while (0)
 
 void test_numeric_add(void)
 {
     TEST_BINARY("1.23", numeric_add, "1.13", "0.1");
-    TEST_BINARY("0.00", numeric_add, "1.13", "-1.13");
+    TEST_BINARY("0", numeric_add, "1.13", "-1.13");
     TEST_BINARY("0.10", numeric_add, "1.13", "-1.03");
     TEST_BINARY("1.23", numeric_add, "0.1", "1.13");
     TEST_BINARY("1.03", numeric_add, "1.13", "-0.1");
@@ -366,7 +376,7 @@ void test_numeric_add(void)
 void test_numeric_sub(void)
 {
     TEST_BINARY("1.03", numeric_sub, "1.13", "0.1");
-    TEST_BINARY("0.00", numeric_sub, "1.13", "1.13");
+    TEST_BINARY("0", numeric_sub, "1.13", "1.13");
     TEST_BINARY("0.10", numeric_sub, "1.13", "1.03");
     TEST_BINARY("-1.03", numeric_sub, "0.1", "1.13");
     TEST_BINARY("1.23", numeric_sub, "1.13", "-0.1");
@@ -451,7 +461,7 @@ void test_numeric_sqrt(void)
 {
     TEST_UNARY("1.000000000000000", numeric_sqrt, "1");
     TEST_UNARY_ERR(NUMERIC_ERRCODE_INVALID_ARGUMENT, numeric_sqrt, "-1");
-    TEST_UNARY("0.000000000000000", numeric_sqrt, "0");
+    TEST_UNARY("0", numeric_sqrt, "0");
     TEST_UNARY("2.000000000000000", numeric_sqrt, "4");
     TEST_UNARY("3.000000000000000", numeric_sqrt, "9");
     TEST_UNARY("1.414213562373095", numeric_sqrt, "2");
@@ -474,7 +484,7 @@ void test_numeric_exp(void)
 
 void test_numeric_ln(void)
 {
-    TEST_UNARY("0.0000000000000000", numeric_ln, "1");
+    TEST_UNARY("0", numeric_ln, "1");
     TEST_UNARY("0.4054651081081644", numeric_ln, "1.5");
     TEST_UNARY("0.6931471805599453", numeric_ln, "2");
     TEST_UNARY("0.9999999999999999", numeric_ln, "2.718281828459045");
@@ -499,7 +509,7 @@ void test_numeric_ln(void)
 void test_numeric_log10(void)
 {
     TEST_UNARY("-3.0000000000000000", numeric_log10, "0.001");
-    TEST_UNARY("0.00000000000000000000", numeric_log10, "1");
+    TEST_UNARY("0", numeric_log10, "1");
     TEST_UNARY("0.17609125905568124208", numeric_log10, "1.5");
     TEST_UNARY("0.30102999566398119521", numeric_log10, "2");
     TEST_UNARY("1.00000000000000000000", numeric_log10, "10");
@@ -518,8 +528,8 @@ void test_numeric_power(void)
 #else
     TEST_BINARY("1.0000000000000000", numeric_power, "0", "0");
 #endif
-    TEST_BINARY("0.0000000000000000", numeric_power, "0", "1");
-    TEST_BINARY("0.0000000000000000", numeric_power, "0", "2");
+    TEST_BINARY("0", numeric_power, "0", "1");
+    TEST_BINARY("0", numeric_power, "0", "2");
     TEST_BINARY("1.0000000000000000", numeric_power, "1", "0");
     TEST_BINARY("1.0000000000000000", numeric_power, "1", "1");
     TEST_BINARY("1.0000000000000000", numeric_power, "1", "2");
