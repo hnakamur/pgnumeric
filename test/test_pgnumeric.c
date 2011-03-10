@@ -34,6 +34,21 @@ void test_numeric_from_str(void)
     numeric_dispose(&x);
 }
 
+void test_numeric_from_double(void)
+{
+    numeric x;
+    char *str;
+
+    numeric_init(&x);
+    cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
+        numeric_from_double(0.1, &x));
+    cut_assert_equal_int(NUMERIC_ERRCODE_NO_ERROR,
+        numeric_to_str(&x, -1, &str));
+    cut_assert_equal_string("0.1", str);
+    free(str);
+    numeric_dispose(&x);
+}
+
 void test_numeric_to_str_sci(void)
 {
     numeric x;

@@ -1777,7 +1777,7 @@ set_var_from_str(const char *str, const char *cp, numeric *dest,
     strip_var(dest);
 
     /* Return end+1 position for caller */
-    if (*result)
+    if (result)
         *result = cp;
     return NUMERIC_ERRCODE_NO_ERROR;
 }
